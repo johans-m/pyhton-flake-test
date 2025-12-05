@@ -3,7 +3,7 @@ WSGI config for myproject project.
 
 It exposes the WSGI callable as a module-level variable named ``application``.
 
-For more information on this file, see
+For more information on this file, see 2123
 https://docs.djangoproject.com/en/6.0/howto/deployment/wsgi/
 """
 
