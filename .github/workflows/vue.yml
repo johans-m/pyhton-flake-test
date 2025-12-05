@@ -40,8 +40,10 @@ jobs:
         run: |
           echo "Analyzing files:"
           for FILE in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            # Remove the working directory prefix to get relative path
+            RELATIVE_FILE="${FILE#frontend/vue-project/}"
             echo "------------------------"
-            echo "File: $FILE"
-            npx eslint "$FILE" || echo "Hint: Run 'npx eslint $FILE --fix'"
-            npx prettier --check "$FILE" || echo "Hint: Run 'npx prettier --write $FILE'"
+            echo "File: $RELATIVE_FILE"
+            npx eslint "$RELATIVE_FILE" || echo "Hint: Run 'npx eslint $RELATIVE_FILE --fix'"
+            npx prettier --check "$RELATIVE_FILE" || echo "Hint: Run 'npx prettier --write $RELATIVE_FILE'"
           done
