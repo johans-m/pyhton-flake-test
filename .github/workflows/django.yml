@@ -3,7 +3,7 @@ name: Django Code Standards
 on:
   pull_request:
     branches:
-      - main
+      - master
 
 jobs:
   lint:
@@ -21,7 +21,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       # 3. Instalar dependencias del proyecto y linters
       - name: Install dependencies and linters
