@@ -3,7 +3,7 @@ name: Django Code Standards
 on:
   pull_request:
     branches:
-      - main
+      - master
 
 jobs:
   lint:
@@ -21,7 +21,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       # 3. Instalar dependencias del proyecto y linters
       - name: Install dependencies and linters
@@ -35,38 +35,23 @@ jobs:
       # 4. Obtener archivos Python modificados
       - name: Get changed Python files
         id: changed-files
-        run: |
-          echo "Getting changed Python files..."
-          git fetch origin ${{ github.base_ref }}
-          CHANGED_FILES=$(git diff --name-only --diff-filter=ACMR origin/${{ github.base_ref }}...HEAD | grep '\.py$' || true)
-
-          if [ -z "$CHANGED_FILES" ]; then
-            echo "No Python files changed"
-            echo "files=" >> $GITHUB_OUTPUT
-          else
-            echo "Changed Python files:"
-            echo "$CHANGED_FILES"
-            echo "files<<EOF" >> $GITHUB_OUTPUT
-            echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          fi
+        uses: tj-actions/changed-files@v41
+        with:
+          files: |
+            **.py
 
       # 5. Ejecutar linters en archivos modificados
       - name: Run linters on changed files
-        if: steps.changed-files.outputs.files != ''
+        if: steps.changed-files.outputs.all_changed_files != ''
         run: |
-          FILES="${{ steps.changed-files.outputs.files }}"
-
-          if [ -n "$FILES" ]; then
-            echo "Running flake8 and black on changed Python files..."
-            for FILE in $FILES; do
-              echo "--------------------------------------------"
-              echo "File: $FILE"
-              flake8 "$FILE" || echo "Hint: Run 'flake8 $FILE' to see errors"
-              black --check "$FILE" || echo "Hint: Run 'black $FILE' to format the code"
-              echo ""
-            done
-          fi
+          echo "Running flake8 and black on changed Python files..."
+          for FILE in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            echo "--------------------------------------------"
+            echo "File: $FILE"
+            flake8 "$FILE" || echo "Hint: Run 'flake8 $FILE' to see errors"
+            black --check "$FILE" || echo "Hint: Run 'black $FILE' to format the code"
+            echo ""
+          done
 
       # 6. Resumen
       - name: Report results
