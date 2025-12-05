@@ -1,0 +1,73 @@
+name: Django Code Standards
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    name: Check Python/Django Code Standards
+
+    steps:
+      # 1. Checkout del código
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. Configurar Python
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      # 3. Instalar dependencias del proyecto y linters
+      - name: Install dependencies and linters
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          pip install flake8 black
+
+      # 4. Obtener archivos Python modificados
+      - name: Get changed Python files
+        id: changed-files
+        run: |
+          echo "Getting changed Python files..."
+          git fetch origin ${{ github.base_ref }}
+          CHANGED_FILES=$(git diff --name-only --diff-filter=ACMR origin/${{ github.base_ref }}...HEAD | grep '\.py$' || true)
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No Python files changed"
+            echo "files=" >> $GITHUB_OUTPUT
+          else
+            echo "Changed Python files:"
+            echo "$CHANGED_FILES"
+            echo "files<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      # 5. Ejecutar linters en archivos modificados
+      - name: Run linters on changed files
+        if: steps.changed-files.outputs.files != ''
+        run: |
+          FILES="${{ steps.changed-files.outputs.files }}"
+
+          if [ -n "$FILES" ]; then
+            echo "Running flake8 and black on changed Python files..."
+            for FILE in $FILES; do
+              echo "--------------------------------------------"
+              echo "File: $FILE"
+              flake8 "$FILE" || echo "Hint: Run 'flake8 $FILE' to see errors"
+              black --check "$FILE" || echo "Hint: Run 'black $FILE' to format the code"
+              echo ""
+            done
+          fi
+
+      # 6. Resumen
+      - name: Report results
+        run: echo "Linting complete. Check above for hints per file."
