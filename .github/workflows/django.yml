@@ -1,9 +1,9 @@
 name: Django Code Standards
 
 on:
-  pull_request:
+  push:
     branches:
-      - master
+      - main
 
 jobs:
   lint:
