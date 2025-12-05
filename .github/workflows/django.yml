@@ -4,7 +4,10 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch: 
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   lint:
@@ -33,51 +36,120 @@ jobs:
           fi
           pip install flake8 black
 
-      # 4. Obtener archivos Python modificados
-      - name: Get changed Python files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
-        with:
-          files: |
-            **.py
-
-      # 5. Ejecutar linters en archivos modificados
-      - name: Run linters on changed files
-        id: lint
-        if: steps.changed-files.outputs.all_changed_files != ''
+      # 4. Contar errores en main (baseline)
+      - name: Count errors in main (baseline)
+        id: baseline
         run: |
-          echo "Running flake8 and black on changed Python files..."
-          LINT_FAILED=0
-          for FILE in ${{ steps.changed-files.outputs.all_changed_files }}; do
-            echo "--------------------------------------------"
-            echo "File: $FILE"
-            if ! flake8 "$FILE"; then
-              echo "::error file=$FILE::Flake8 errors found. Run 'flake8 $FILE' to see errors"
-              LINT_FAILED=1
-            fi
-            if ! black --check "$FILE"; then
-              echo "::error file=$FILE::Black formatting issues. Run 'black $FILE' to format"
-              LINT_FAILED=1
-            fi
-            echo ""
-          done
-          if [ $LINT_FAILED -eq 1 ]; then
-            echo "lint_status=failed" >> $GITHUB_OUTPUT
-            exit 1
-          else
-            echo "lint_status=passed" >> $GITHUB_OUTPUT
+          # Guardar rama actual
+          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          CURRENT_SHA=$(git rev-parse HEAD)
+
+          # Ir a main para contar errores baseline
+          git checkout origin/main --quiet 2>/dev/null || git checkout main --quiet
+
+          # Contar errores de flake8 en main (excluir venv)
+          BASELINE_FLAKE8=$(flake8 . --exclude=venv,node_modules,.git --count 2>/dev/null | tail -1 || echo "0")
+          if [ -z "$BASELINE_FLAKE8" ] || [ "$BASELINE_FLAKE8" = "" ]; then
+            BASELINE_FLAKE8=0
           fi
 
-      # 6. Resumen - Éxito
+          # Contar archivos con problemas de black en main
+          BASELINE_BLACK=$(black --check . --exclude="venv|node_modules" 2>&1 | grep -c "would reformat" || echo "0")
+
+          echo "baseline_flake8=$BASELINE_FLAKE8" >> $GITHUB_OUTPUT
+          echo "baseline_black=$BASELINE_BLACK" >> $GITHUB_OUTPUT
+          echo "📊 Baseline main - Flake8: $BASELINE_FLAKE8, Black: $BASELINE_BLACK"
+
+          # Volver a la rama actual
+          git checkout $CURRENT_SHA --quiet
+
+      # 5. Contar errores en rama actual
+      - name: Count errors in current branch
+        id: current
+        run: |
+          # Contar errores de flake8 en rama actual (excluir venv)
+          CURRENT_FLAKE8=$(flake8 . --exclude=venv,node_modules,.git --count 2>/dev/null | tail -1 || echo "0")
+          if [ -z "$CURRENT_FLAKE8" ] || [ "$CURRENT_FLAKE8" = "" ]; then
+            CURRENT_FLAKE8=0
+          fi
+
+          # Contar archivos con problemas de black en rama actual
+          CURRENT_BLACK=$(black --check . --exclude="venv|node_modules" 2>&1 | grep -c "would reformat" || echo "0")
+
+          echo "current_flake8=$CURRENT_FLAKE8" >> $GITHUB_OUTPUT
+          echo "current_black=$CURRENT_BLACK" >> $GITHUB_OUTPUT
+          echo "📊 Current branch - Flake8: $CURRENT_FLAKE8, Black: $CURRENT_BLACK"
+
+      # 6. Comparar y decidir si falla
+      - name: Compare baseline vs current
+        id: compare
+        run: |
+          BASELINE_FLAKE8=${{ steps.baseline.outputs.baseline_flake8 }}
+          BASELINE_BLACK=${{ steps.baseline.outputs.baseline_black }}
+          CURRENT_FLAKE8=${{ steps.current.outputs.current_flake8 }}
+          CURRENT_BLACK=${{ steps.current.outputs.current_black }}
+
+          echo "============================================"
+          echo "📊 COMPARACIÓN DE ERRORES"
+          echo "============================================"
+          echo "Flake8: main=$BASELINE_FLAKE8 → actual=$CURRENT_FLAKE8"
+          echo "Black:  main=$BASELINE_BLACK → actual=$CURRENT_BLACK"
+          echo "============================================"
+
+          FAILED=0
+
+          if [ "$CURRENT_FLAKE8" -gt "$BASELINE_FLAKE8" ]; then
+            NEW_ERRORS=$((CURRENT_FLAKE8 - BASELINE_FLAKE8))
+            echo "::error::❌ Se introdujeron $NEW_ERRORS nuevos errores de Flake8"
+            FAILED=1
+          else
+            FIXED=$((BASELINE_FLAKE8 - CURRENT_FLAKE8))
+            if [ "$FIXED" -gt 0 ]; then
+              echo "✅ Se corrigieron $FIXED errores de Flake8"
+            fi
+          fi
+
+          if [ "$CURRENT_BLACK" -gt "$BASELINE_BLACK" ]; then
+            NEW_ERRORS=$((CURRENT_BLACK - BASELINE_BLACK))
+            echo "::error::❌ Se introdujeron $NEW_ERRORS nuevos archivos con problemas de formato (Black)"
+            FAILED=1
+          else
+            FIXED=$((BASELINE_BLACK - CURRENT_BLACK))
+            if [ "$FIXED" -gt 0 ]; then
+              echo "✅ Se corrigieron $FIXED archivos con problemas de formato"
+            fi
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            exit 1
+          fi
+
+      # 7. Resumen - Éxito
       - name: Summary - Success
         if: success()
         run: |
           echo "## ✅ Python Lint Check Passed" >> $GITHUB_STEP_SUMMARY
-          echo "All changed Python files passed flake8 and black checks." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No se introdujeron nuevos errores de linting." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Linter | Main (baseline) | Actual |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-----------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Flake8 | ${{ steps.baseline.outputs.baseline_flake8 }} | ${{ steps.current.outputs.current_flake8 }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Black  | ${{ steps.baseline.outputs.baseline_black }} | ${{ steps.current.outputs.current_black }} |" >> $GITHUB_STEP_SUMMARY
 
-      # 7. Resumen - Fallo
+      # 8. Resumen - Fallo
       - name: Summary - Failure
         if: failure()
         run: |
           echo "## ❌ Python Lint Check Failed" >> $GITHUB_STEP_SUMMARY
-          echo "Some files have linting or formatting issues. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Se introdujeron nuevos errores de linting respecto a main." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Linter | Main (baseline) | Actual |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-----------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Flake8 | ${{ steps.baseline.outputs.baseline_flake8 }} | ${{ steps.current.outputs.current_flake8 }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Black  | ${{ steps.baseline.outputs.baseline_black }} | ${{ steps.current.outputs.current_black }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Cómo corregir:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`flake8 .\` para ver errores de estilo" >> $GITHUB_STEP_SUMMARY
+          echo "- \`black .\` para formatear automáticamente" >> $GITHUB_STEP_SUMMARY

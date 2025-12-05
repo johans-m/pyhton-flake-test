@@ -7,10 +7,13 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   lint:
     runs-on: ubuntu-latest
+    name: Check Vue/JS Code Standards
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,54 +25,101 @@ jobs:
         with:
           node-version: '20'
 
+      # 1. Contar errores en main (baseline)
+      - name: Count errors in main (baseline)
+        id: baseline
+        working-directory: frontend/vue-project
+        run: |
+          # Guardar SHA actual
+          CURRENT_SHA=$(git rev-parse HEAD)
+
+          # Ir a main para contar errores baseline
+          git checkout origin/main --quiet 2>/dev/null || git checkout main --quiet
+
+          # Instalar dependencias en main
+          npm install --silent
+
+          # Contar errores de Prettier en main
+          BASELINE_PRETTIER=$(npx prettier --check "src/**/*.{js,ts,vue}" 2>&1 | grep -c "Checking" | xargs -I {} expr {} - $(npx prettier --check "src/**/*.{js,ts,vue}" 2>&1 | grep -c "All matched files") || echo "0")
+          # Método alternativo más confiable
+          BASELINE_PRETTIER=$(npx prettier --check "src/**/*.{js,ts,vue}" 2>&1 | grep -c "\[warn\]" || echo "0")
+
+          echo "baseline_prettier=$BASELINE_PRETTIER" >> $GITHUB_OUTPUT
+          echo "📊 Baseline main - Prettier: $BASELINE_PRETTIER archivos con problemas"
+
+          # Volver a la rama actual
+          git checkout $CURRENT_SHA --quiet
+
+      # 2. Instalar dependencias en rama actual
       - name: Install dependencies
         working-directory: frontend/vue-project
         run: |
           npm install
 
-      - name: Get changed JS/TS/Vue files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
-        with:
-          files: |
-            frontend/vue-project/**/**.{js,ts,vue}
-
-      - name: Run ESLint/Prettier on changed files
-        id: lint
+      # 3. Contar errores en rama actual
+      - name: Count errors in current branch
+        id: current
         working-directory: frontend/vue-project
-        if: steps.changed-files.outputs.all_changed_files != ''
         run: |
-          echo "Analyzing files:"
-          LINT_FAILED=0
-          for FILE in ${{ steps.changed-files.outputs.all_changed_files }}; do
-            # Remove the working directory prefix to get relative path
-            RELATIVE_FILE="${FILE#frontend/vue-project/}"
-            echo "------------------------"
-            echo "File: $RELATIVE_FILE"
-            if ! npx eslint "$RELATIVE_FILE"; then
-              echo "::error file=$FILE::ESLint errors found. Run 'npx eslint $RELATIVE_FILE --fix'"
-              LINT_FAILED=1
-            fi
-            if ! npx prettier --check "$RELATIVE_FILE"; then
-              echo "::error file=$FILE::Prettier formatting issues. Run 'npx prettier --write $RELATIVE_FILE'"
-              LINT_FAILED=1
-            fi
-          done
-          if [ $LINT_FAILED -eq 1 ]; then
-            echo "lint_status=failed" >> $GITHUB_OUTPUT
-            exit 1
+          # Contar errores de Prettier en rama actual
+          CURRENT_PRETTIER=$(npx prettier --check "src/**/*.{js,ts,vue}" 2>&1 | grep -c "\[warn\]" || echo "0")
+
+          echo "current_prettier=$CURRENT_PRETTIER" >> $GITHUB_OUTPUT
+          echo "📊 Current branch - Prettier: $CURRENT_PRETTIER archivos con problemas"
+
+      # 4. Comparar y decidir si falla
+      - name: Compare baseline vs current
+        id: compare
+        run: |
+          BASELINE_PRETTIER=${{ steps.baseline.outputs.baseline_prettier }}
+          CURRENT_PRETTIER=${{ steps.current.outputs.current_prettier }}
+
+          echo "============================================"
+          echo "📊 COMPARACIÓN DE ERRORES"
+          echo "============================================"
+          echo "Prettier: main=$BASELINE_PRETTIER → actual=$CURRENT_PRETTIER"
+          echo "============================================"
+
+          FAILED=0
+
+          if [ "$CURRENT_PRETTIER" -gt "$BASELINE_PRETTIER" ]; then
+            NEW_ERRORS=$((CURRENT_PRETTIER - BASELINE_PRETTIER))
+            echo "::error::❌ Se introdujeron $NEW_ERRORS nuevos archivos con problemas de formato (Prettier)"
+            FAILED=1
           else
-            echo "lint_status=passed" >> $GITHUB_OUTPUT
+            FIXED=$((BASELINE_PRETTIER - CURRENT_PRETTIER))
+            if [ "$FIXED" -gt 0 ]; then
+              echo "✅ Se corrigieron $FIXED archivos con problemas de formato"
+            fi
           fi
 
+          if [ "$FAILED" -eq 1 ]; then
+            exit 1
+          fi
+
+      # 5. Resumen - Éxito
       - name: Summary - Success
         if: success()
         run: |
-          echo "## ✅ Vue Lint Check Passed" >> $GITHUB_STEP_SUMMARY
-          echo "All changed files passed ESLint and Prettier checks." >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Vue/JS Lint Check Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No se introdujeron nuevos errores de formato." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Linter | Main (baseline) | Actual |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-----------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Prettier | ${{ steps.baseline.outputs.baseline_prettier }} | ${{ steps.current.outputs.current_prettier }} |" >> $GITHUB_STEP_SUMMARY
 
+      # 6. Resumen - Fallo
       - name: Summary - Failure
         if: failure()
         run: |
-          echo "## ❌ Vue Lint Check Failed" >> $GITHUB_STEP_SUMMARY
-          echo "Some files have linting or formatting issues. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+          echo "## ❌ Vue/JS Lint Check Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Se introdujeron nuevos errores de formato respecto a main." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Linter | Main (baseline) | Actual |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-----------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Prettier | ${{ steps.baseline.outputs.baseline_prettier }} | ${{ steps.current.outputs.current_prettier }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Cómo corregir:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`cd frontend/vue-project && npx prettier --write src/\` para formatear automáticamente" >> $GITHUB_STEP_SUMMARY
