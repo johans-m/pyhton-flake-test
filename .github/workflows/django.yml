@@ -43,17 +43,41 @@ jobs:
 
       # 5. Ejecutar linters en archivos modificados
       - name: Run linters on changed files
+        id: lint
         if: steps.changed-files.outputs.all_changed_files != ''
         run: |
           echo "Running flake8 and black on changed Python files..."
+          LINT_FAILED=0
           for FILE in ${{ steps.changed-files.outputs.all_changed_files }}; do
             echo "--------------------------------------------"
             echo "File: $FILE"
-            flake8 "$FILE" || echo "Hint: Run 'flake8 $FILE' to see errors"
-            black --check "$FILE" || echo "Hint: Run 'black $FILE' to format the code"
+            if ! flake8 "$FILE"; then
+              echo "::error file=$FILE::Flake8 errors found. Run 'flake8 $FILE' to see errors"
+              LINT_FAILED=1
+            fi
+            if ! black --check "$FILE"; then
+              echo "::error file=$FILE::Black formatting issues. Run 'black $FILE' to format"
+              LINT_FAILED=1
+            fi
             echo ""
           done
+          if [ $LINT_FAILED -eq 1 ]; then
+            echo "lint_status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "lint_status=passed" >> $GITHUB_OUTPUT
+          fi
 
-      # 6. Resumen
-      - name: Report results
-        run: echo "Linting complete. Check above for hints per file."
+      # 6. Resumen - Éxito
+      - name: Summary - Success
+        if: success()
+        run: |
+          echo "## ✅ Python Lint Check Passed" >> $GITHUB_STEP_SUMMARY
+          echo "All changed Python files passed flake8 and black checks." >> $GITHUB_STEP_SUMMARY
+
+      # 7. Resumen - Fallo
+      - name: Summary - Failure
+        if: failure()
+        run: |
+          echo "## ❌ Python Lint Check Failed" >> $GITHUB_STEP_SUMMARY
+          echo "Some files have linting or formatting issues. Check the logs above for details." >> $GITHUB_STEP_SUMMARY

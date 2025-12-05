@@ -35,15 +35,41 @@ jobs:
             frontend/vue-project/**/**.{js,ts,vue}
 
       - name: Run ESLint/Prettier on changed files
+        id: lint
         working-directory: frontend/vue-project
         if: steps.changed-files.outputs.all_changed_files != ''
         run: |
           echo "Analyzing files:"
+          LINT_FAILED=0
           for FILE in ${{ steps.changed-files.outputs.all_changed_files }}; do
             # Remove the working directory prefix to get relative path
             RELATIVE_FILE="${FILE#frontend/vue-project/}"
             echo "------------------------"
             echo "File: $RELATIVE_FILE"
-            npx eslint "$RELATIVE_FILE" || echo "Hint: Run 'npx eslint $RELATIVE_FILE --fix'"
-            npx prettier --check "$RELATIVE_FILE" || echo "Hint: Run 'npx prettier --write $RELATIVE_FILE'"
+            if ! npx eslint "$RELATIVE_FILE"; then
+              echo "::error file=$FILE::ESLint errors found. Run 'npx eslint $RELATIVE_FILE --fix'"
+              LINT_FAILED=1
+            fi
+            if ! npx prettier --check "$RELATIVE_FILE"; then
+              echo "::error file=$FILE::Prettier formatting issues. Run 'npx prettier --write $RELATIVE_FILE'"
+              LINT_FAILED=1
+            fi
           done
+          if [ $LINT_FAILED -eq 1 ]; then
+            echo "lint_status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "lint_status=passed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Summary - Success
+        if: success()
+        run: |
+          echo "## ✅ Vue Lint Check Passed" >> $GITHUB_STEP_SUMMARY
+          echo "All changed files passed ESLint and Prettier checks." >> $GITHUB_STEP_SUMMARY
+
+      - name: Summary - Failure
+        if: failure()
+        run: |
+          echo "## ❌ Vue Lint Check Failed" >> $GITHUB_STEP_SUMMARY
+          echo "Some files have linting or formatting issues. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
