@@ -12,11 +12,11 @@ import TheWelcome from    './components/TheWelcome.vue'
   </header>
 
   <main>
-    <TheWelcome/>
+    <TheWelcome/> 
   </main>
 </template>
 
-<style scoped>
+<style scoped> 
 header {
   line-height: 1.5; 
 }
